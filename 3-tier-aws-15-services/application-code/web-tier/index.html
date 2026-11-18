@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AWS 3-Tier Web App</title>
+  <style>
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: #f4f6f8; margin: 0; padding: 20px; color: #232f3e; }
+    .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    h1 { color: #ff9900; margin-top: 0; display: flex; align-items: center; gap: 10px; }
+    .banner { background: #e7f3fe; border-left: 5px solid #2196f3; padding: 12px; margin-bottom: 20px; font-size: 14px; }
+    .status-badge { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; background: #e0e0e0; }
+    .status-badge.online { background: #d4edda; color: #155724; }
+    .status-badge.offline { background: #f8d7da; color: #721c24; }
+    .form-group { display: flex; gap: 10px; margin-bottom: 20px; }
+    input { padding: 10px 14px; border: 1px solid #ccc; border-radius: 4px; font-size: 15px; }
+    input[type="number"] { width: 140px; }
+    input[type="text"] { flex-grow: 1; }
+    button { background: #ff9900; color: white; border: none; padding: 10px 18px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 15px; }
+    button:hover { background: #ec8b00; }
+    button.delete-btn { background: #dc3545; }
+    button.delete-btn:hover { background: #bd2130; }
+    table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #ddd; }
+    th { background-color: #232f3e; color: white; }
+    tr:hover { background-color: #f9f9f9; }
+    .empty-state { text-align: center; color: #777; padding: 25px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>AWS 3-Tier Web App</h1>
+    <div class="banner">
+      Architecture: <strong>Web Tier (Nginx)</strong> &rarr; <strong>Internal ALB</strong> &rarr; <strong>App Tier (Node.js)</strong> &rarr; <strong>Database (MySQL RDS)</strong>
+      <div style="margin-top: 8px;">
+        Backend Status: <span id="app-status" class="status-badge">Checking...</span>
+      </div>
+    </div>
+
+    <h3>Add New Transaction</h3>
+    <div class="form-group">
+      <input type="number" id="amount" placeholder="Amount ($)" step="0.01" required />
+      <input type="text" id="desc" placeholder="Description (e.g. EC2 Hosting)" required />
+      <button onclick="addTransaction()">Submit</button>
+    </div>
+
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <h3>Transaction History</h3>
+      <div>
+        <button onclick="fetchTransactions()" style="background:#555;">Refresh</button>
+        <button onclick="deleteAllTransactions()" class="delete-btn">Clear All</button>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 15%;">ID</th>
+          <th style="width: 25%;">Amount ($)</th>
+          <th style="width: 60%;">Description</th>
+        </tr>
+      </thead>
+      <tbody id="transactions-body">
+        <tr><td colspan="3" class="empty-state">Loading transactions...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    // 1. Check backend health
+    async function checkHealth() {
+      const badge = document.getElementById('app-status');
+      try {
+        const res = await fetch('/api/health');
+        if (res.ok) {
+          const data = await res.json();
+          badge.className = 'status-badge online';
+          badge.innerText = 'Connected (DB: ' + (data.database || 'ready') + ')';
+        } else {
+          badge.className = 'status-badge offline';
+          badge.innerText = 'App Error HTTP ' + res.status;
+        }
+      } catch (e) {
+        badge.className = 'status-badge offline';
+        badge.innerText = 'Disconnected';
+      }
+    }
+
+    // 2. Fetch all transactions
+    async function fetchTransactions() {
+      const tbody = document.getElementById('transactions-body');
+      try {
+        const res = await fetch('/api/transaction');
+        const data = await res.json();
+        const items = data.result || [];
+        if (items.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="3" class="empty-state">No transactions recorded yet in MySQL RDS.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = items.map(tx => `
+          <tr>
+            <td><strong>#${tx.id}</strong></td>
+            <td>$${parseFloat(tx.amount).toFixed(2)}</td>
+            <td>${escapeHtml(tx.description)}</td>
+          </tr>
+        `).join('');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="3" class="empty-state" style="color:red;">Error loading transactions: ${err.message}</td></tr>`;
+      }
+    }
+
+    // 3. Add a transaction
+    async function addTransaction() {
+      const amountInput = document.getElementById('amount');
+      const descInput = document.getElementById('desc');
+      const amount = amountInput.value.trim();
+      const desc = descInput.value.trim();
+
+      if (!amount || !desc) {
+        alert('Please fill in both Amount and Description.');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/transaction', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ amount, desc })
+        });
+        if (res.ok) {
+          amountInput.value = '';
+          descInput.value = '';
+          fetchTransactions();
+        } else {
+          const err = await res.json();
+          alert('Failed to add transaction: ' + (err.error || res.statusText));
+        }
+      } catch (err) {
+        alert('Request failed: ' + err.message);
+      }
+    }
+
+    // 4. Delete all transactions
+    async function deleteAllTransactions() {
+      if (!confirm('Are you sure you want to delete all transactions from the database?')) return;
+      try {
+        const res = await fetch('/api/transaction', { method: 'DELETE' });
+        if (res.ok) {
+          fetchTransactions();
+        }
+      } catch (err) {
+        alert('Delete failed: ' + err.message);
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.innerText = text;
+      return div.innerHTML;
+    }
+
+    // Init
+    checkHealth();
+    fetchTransactions();
+    setInterval(checkHealth, 15000);
+  </script>
+</body>
+</html>

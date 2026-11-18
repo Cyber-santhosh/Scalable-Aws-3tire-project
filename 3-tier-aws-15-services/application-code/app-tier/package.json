@@ -1,0 +1,16 @@
+{
+  "name": "aws-3tier-app-tier",
+  "version": "1.0.0",
+  "description": "Simple 3-tier App Backend",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "aws-sdk": "^2.1500.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "mysql2": "^3.9.7"
+  }
+}
+
